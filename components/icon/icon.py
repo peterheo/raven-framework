@@ -39,10 +39,10 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QWidget
 
 # Local imports
-from ..helpers.font_utils import create_font
-from ..helpers.logger import get_logger
-from ..helpers.themes import RAVEN_CORE
-from ..helpers.utils_light import load_config, to_qcolor
+from ...helpers.font_utils import create_font
+from ...helpers.logger import get_logger
+from ...helpers.themes import RAVEN_CORE
+from ...helpers.utils_light import load_config, to_qcolor
 
 theme = RAVEN_CORE
 
@@ -709,6 +709,23 @@ class Icon(QWidget):
                 wrapped_words.append(word)
 
         return " ".join(wrapped_words)
+
+    def set_interaction_enabled(self, enabled: bool) -> None:
+        """Enable or disable hover, dwell, and click (e.g. while shell is asleep).
+
+        Unlike set_disabled(), this does not dim the icon — it only gates
+        interaction, so the widget keeps its normal appearance.
+        """
+        if enabled:
+            self.setEnabled(True)
+            return
+
+        self.progress_timer.stop()
+        self.delay_timer.stop()
+        self.progress = 0.0
+        self.delay_progress = 0.0
+        self.update()
+        self.setEnabled(False)
 
     def set_disabled(self, disabled: bool) -> None:
         """

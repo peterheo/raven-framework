@@ -22,10 +22,11 @@ import sys
 from typing import Optional
 
 from PySide6.QtCore import QDateTime, Qt, QTimer
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
 from ..components.container import Container
-from ..components.icon import Icon
+from ..components.icon import RevealIcon
 from ..components.text_box import TextBox
 from ..helpers.animation_utils import fade_in, fade_out, resolve_curve
 from ..helpers.logger import get_logger
@@ -56,6 +57,12 @@ APP_CONTAINER_HEIGHT = APP_RESOLUTION[1]
 # Constants for timer intervals
 TIME_UPDATE_INTERVAL_MS = 1000  # milliseconds
 ENABLE_TIME_DISPLAY = False
+
+APP_EXIT_FADE_MS = _config["animation"]["app_launch"]["APP_EXIT_FADE_MS"]
+
+# How long the home button's launch blackout stays fully black after its
+# sweep, so the exit fade underneath finishes out of sight.
+HOME_BLACKOUT_HOLD_MS = _config["animation"]["app_launch"]["HOME_BLACKOUT_HOLD_MS"]
 
 _wake_cfg = _config["animation"]["wake"]
 
@@ -121,11 +128,31 @@ class RavenApp(Container):
         )
 
         close_icon_size = 80
-        self.close_icon = Icon(
-            is_square=False, background_image_path=home_icon_path, size=close_icon_size
+        # Reveal home button: the dwell expands it to black and sweeps the
+        # launch blackout across the entire app before on_home_clicked fires.
+        # The blackout then holds full-black long enough for the app's exit
+        # fade to play out hidden behind it — a dwell exit cuts straight to
+        # black, while a plain click (no expand/blackout) keeps the visible
+        # exit fade.
+        self.close_icon = RevealIcon(
+            is_square=False,
+            background_image_path=home_icon_path,
+            size=close_icon_size,
+            overlay_parent=self,
+            screen_width=RAVEN_APP_WIDTH,
+            screen_height=RAVEN_APP_HEIGHT,
+            blackout_hold_ms=HOME_BLACKOUT_HOLD_MS,
         )
         self.close_icon.on_clicked(self.on_home_clicked)
-        self.add(self.close_icon, RAVEN_APP_WIDTH - close_icon_size - 3, 10)
+        # Reveal icons pad their widget for scale overflow; offset by the
+        # circle's position inside the widget so the visible icon lands where
+        # the unpadded icon used to.
+        icon_left, icon_top, _, _ = self.close_icon.circle_bounds_in_widget()
+        self.add(
+            self.close_icon,
+            RAVEN_APP_WIDTH - close_icon_size - 13 - icon_left,
+            15 - icon_top,
+        )
         self.close_icon.raise_()
 
         # Catches gaze/mouse while asleep (simulator composite is mouse-transparent)
@@ -149,6 +176,12 @@ class RavenApp(Container):
             self._timer.timeout.connect(self.update_time)
             self._timer.start(TIME_UPDATE_INTERVAL_MS)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Explicitly request focus rather than relying on Qt/the compositor
+        # to hand it to us automatically on window activation — StrongFocus
+        # alone doesn't guarantee that, especially once this widget is
+        # rechilded into RunApp's layout (see RunApp.__init__, which
+        # re-asserts this after embedding).
+        self.setFocus()
 
         self.app_id = ""
         self.is_awake = True
@@ -160,6 +193,24 @@ class RavenApp(Container):
         self._fade_curve = resolve_curve(_wake_cfg["FADE_CURVE"])
         self._wake_brightness_gain = _wake_cfg["WAKE_BRIGHTNESS_GAIN"]
         self._sleep_brightness_gain = _wake_cfg["SLEEP_BRIGHTNESS_GAIN"]
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Enter/Return exits the app via the same path as the close icon.
+
+        Framework-level so any RavenApp-based dev app gets an exit key for
+        free, without the app author needing to wire up their own key
+        handling or call bind_sleep_wake().
+
+        Logs every key (not just Enter/Return) — if this widget isn't
+        actually receiving keyboard focus, nothing here fires at all, so an
+        unconditional log is what lets that be diagnosed from the console
+        output rather than assumed.
+        """
+        log.info("RavenApp keyPressEvent: key=%s", event.key(), extra={"console": True})
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            log.info("Enter pressed — exiting app", extra={"console": True})
+            self.on_home_clicked()
+        super().keyPressEvent(event)
 
     def bind_sleep_wake(self, app_id: str = "", app_key: str = "") -> None:
         """Wire double-click (Enter in simulator) to fade the UI in and out."""
@@ -188,16 +239,19 @@ class RavenApp(Container):
         self.close_icon.set_disabled(False)
 
     def _fade_ui_for_sleep_wake(self, *, sleeping: bool) -> None:
-        """Fade the visible UI; simulator composites on a label, not the live widget."""
-        from .raven_simulator import SimulatorRunApp
+        """Fade the visible UI; simulator composites on a label, not the live
+        widget. On device the window is always ``RunApp``, so skip (and never
+        import) the simulator — it's heavy to load."""
+        if not is_raven_device():
+            from .raven_simulator import SimulatorRunApp
 
-        win = self.window()
-        if isinstance(win, SimulatorRunApp):
-            if sleeping:
-                win.sleep_app_ui(self._fade_ms, self._fade_curve)
-            else:
-                win.wake_app_ui(self._fade_ms, self._fade_curve)
-            return
+            win = self.window()
+            if isinstance(win, SimulatorRunApp):
+                if sleeping:
+                    win.sleep_app_ui(self._fade_ms, self._fade_curve)
+                else:
+                    win.wake_app_ui(self._fade_ms, self._fade_curve)
+                return
         if sleeping:
             fade_out(self, duration=self._fade_ms, curve=self._fade_curve)
         else:
@@ -242,15 +296,35 @@ class RavenApp(Container):
         """
         Handle home button click event.
 
-        Closes the main window gracefully so RunApp.closeEvent can stop
-        timers and worker threads, then quits the application.
+        Fades the app content out (the exit mirror of the launch reveal), then
+        closes the window and quits so RunApp.closeEvent can stop timers and
+        worker threads. The exit signal is sent after the fade, so the launcher
+        fades back in only once the app has faded out.
         """
+        if getattr(self, "_exiting", False):
+            return
+        self._exiting = True
         try:
-            log.info(
-                "Close button clicked - shutting down app...", extra={"console": True}
+            log.info("Close button clicked - fading out...", extra={"console": True})
+            self._set_ui_interaction_blocked(True)
+            win = self.window()
+            if win is not None and hasattr(win, "conceal"):
+                win.conceal(APP_EXIT_FADE_MS)
+                QTimer.singleShot(APP_EXIT_FADE_MS, self._finalize_exit)
+            else:
+                self._finalize_exit()
+        except Exception as e:
+            log.error(
+                f"Error starting app shutdown: {e}",
+                exc_info=True,
+                extra={"console": True},
             )
-            log.info("RAVEN APP READY EXITED SIGNAL", extra={"console": True})
+            self._finalize_exit()
 
+    def _finalize_exit(self) -> None:
+        """After the exit fade: signal the launcher, close the window, quit."""
+        try:
+            log.info("RAVEN APP READY EXITED SIGNAL", extra={"console": True})
             if is_raven_device():
                 try:
                     from ..ipc.app_launch import send_app_exited

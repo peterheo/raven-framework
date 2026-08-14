@@ -186,7 +186,9 @@ class Speaker:
                 emitter.finished.emit()
                 return
 
-            backend = self._play_simpleaudio if SIMPLEAUDIO_AVAILABLE else self._play_winsound
+            backend = (
+                self._play_simpleaudio if SIMPLEAUDIO_AVAILABLE else self._play_winsound
+            )
 
             def _play() -> None:
                 try:

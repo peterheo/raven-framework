@@ -871,6 +871,32 @@ class SimulatorRunApp(QMainWindow):
             return None
         return result
 
+    def start_hidden(self) -> None:
+        """Make the visible surface transparent until revealed (handoff)."""
+        surface = (
+            self._app_widget
+            if getattr(self, "_raw_mode", False)
+            else getattr(self, "_composite_label", None)
+        )
+        if surface is not None:
+            effect = QGraphicsOpacityEffect(surface)
+            effect.setOpacity(0.0)
+            surface.setGraphicsEffect(effect)
+
+    def reveal(self, duration_ms: int) -> None:
+        """Fade the visible surface in (handoff cross-fade with the launcher)."""
+        if getattr(self, "_raw_mode", False):
+            fade_in(self._app_widget, duration=duration_ms)
+        elif hasattr(self, "_composite_label"):
+            fade_in(self._composite_label, duration=duration_ms)
+
+    def conceal(self, duration_ms: int) -> None:
+        """Fade the visible surface out (mirror of reveal, for app exit)."""
+        if getattr(self, "_raw_mode", False):
+            fade_out(self._app_widget, duration=duration_ms)
+        elif hasattr(self, "_composite_label"):
+            fade_out(self._composite_label, duration=duration_ms)
+
     def sleep_app_ui(self, duration_ms: int, curve: str) -> None:
         """Fade the visible simulator UI out (composite label or raw app widget)."""
         self._app_ui_asleep = True
@@ -1062,29 +1088,25 @@ class SimulatorRunApp(QMainWindow):
         tip = QFrame(self)
         tip.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint)
         tip.setAttribute(Qt.WA_TranslucentBackground, True)
-        tip.setStyleSheet(
-            """
+        tip.setStyleSheet("""
             QFrame {
                 background-color: rgba(30, 30, 30, 0.85);
                 border: 1px solid rgba(255, 255, 255, 0.18);
                 border-radius: 12px;
             }
-        """
-        )
+        """)
         tip_label = QLabel(tip)
         tip_label.setWordWrap(True)
         tip_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tip_label.setText(RAW_MODE_TOOLTIP_TEXT)
-        tip_label.setStyleSheet(
-            """
+        tip_label.setStyleSheet("""
             QLabel {
                 color: rgba(255, 255, 255, 0.92);
                 font-size: 14px;
                 line-height: 1.35;
                 padding: 18px 12px;
             }
-        """
-        )
+        """)
         tip_label.setMinimumWidth(260)
         tip_label.setMaximumWidth(320)
         tip_layout = QVBoxLayout(tip)
