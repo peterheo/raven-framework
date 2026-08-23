@@ -441,7 +441,11 @@ class _BackgroundWorker(QObject):
                     tmp_path = tmp.name
                     tmp.close()
                     try:
-                        subprocess.run(["imagesnap", tmp_path], capture_output=True, timeout=5)
+                        subprocess.run(
+                            ["imagesnap", "-d", self._widget._imagesnap_device, "-w", "0.1", tmp_path],
+                            capture_output=True,
+                            timeout=10,
+                        )
                         background = cv2.imread(tmp_path)
                         if background is not None:
                             background = cv2.resize(
@@ -486,6 +490,7 @@ class SimulatorBackgroundWidget(QWidget):
         self.current_preset = SimulatorBackgroundPreset.NIGHT
         self.camera_capture = None
         self._use_imagesnap = False
+        self._imagesnap_device = None
         self.video_capture = None
         self.background_path = None
 
@@ -603,6 +608,25 @@ class SimulatorBackgroundWidget(QWidget):
             self.camera_capture = None
             return self._open_camera_imagesnap()
 
+    def _detect_imagesnap_device(self) -> str | None:
+        """Return the first camera device name from `imagesnap -l`, or None."""
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["imagesnap", "-l"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in result.stdout.splitlines()[1:]:
+                name = line.strip()
+                if name:
+                    return name
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        return None
+
     def _open_camera_imagesnap(self) -> bool:
         """Fallback for macOS: capture via the `imagesnap` CLI instead of cv2."""
         import shutil
@@ -613,14 +637,20 @@ class SimulatorBackgroundWidget(QWidget):
             log.error("Could not open camera (cv2 failed, imagesnap not found)", extra={"console": True})
             return False
 
+        device = self._detect_imagesnap_device()
+        if not device:
+            log.error("Could not open camera (imagesnap found no devices)", extra={"console": True})
+            return False
+        self._imagesnap_device = device
+
         tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
         tmp_path = tmp.name
         tmp.close()
         try:
             subprocess.run(
-                ["imagesnap", "-w", "0.5", tmp_path],
+                ["imagesnap", "-d", device, "-w", "1", tmp_path],
                 capture_output=True,
-                timeout=5,
+                timeout=10,
             )
             if os.path.getsize(tmp_path) > 0:
                 self._use_imagesnap = True
@@ -640,6 +670,7 @@ class SimulatorBackgroundWidget(QWidget):
     def _close_camera(self) -> None:
         if self._use_imagesnap:
             self._use_imagesnap = False
+            self._imagesnap_device = None
             log.info("Camera closed (imagesnap mode)", extra={"console": True})
             return
         if self.camera_capture is not None:
