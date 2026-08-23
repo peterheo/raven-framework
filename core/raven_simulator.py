@@ -638,6 +638,7 @@ class SimulatorBackgroundWidget(QWidget):
             return False
 
         device = self._detect_imagesnap_device()
+        print(f"[DIAG] imagesnap device detected: {device!r}", flush=True)
         if not device:
             log.error("Could not open camera (imagesnap found no devices)", extra={"console": True})
             return False
@@ -647,12 +648,16 @@ class SimulatorBackgroundWidget(QWidget):
         tmp_path = tmp.name
         tmp.close()
         try:
-            subprocess.run(
-                ["imagesnap", "-d", device, "-w", "1", tmp_path],
+            cmd = ["imagesnap", "-d", device, "-w", "1", tmp_path]
+            print(f"[DIAG] running: {cmd}", flush=True)
+            result = subprocess.run(
+                cmd,
                 capture_output=True,
                 timeout=10,
             )
-            if os.path.getsize(tmp_path) > 0:
+            fsize = os.path.getsize(tmp_path)
+            print(f"[DIAG] imagesnap exit={result.returncode} filesize={fsize} stderr={result.stderr[:200]}", flush=True)
+            if fsize > 0:
                 self._use_imagesnap = True
                 self.camera_capture = None
                 log.info("Camera opened via imagesnap fallback", extra={"console": True})
