@@ -621,6 +621,8 @@ class SimulatorBackgroundWidget(QWidget):
             )
             for line in result.stdout.splitlines()[1:]:
                 name = line.strip()
+                if name.startswith("=> "):
+                    name = name[3:]
                 if name:
                     return name
         except (FileNotFoundError, subprocess.TimeoutExpired):
