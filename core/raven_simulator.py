@@ -550,6 +550,7 @@ class SimulatorBackgroundWidget(QWidget):
             )
 
     def _open_camera(self) -> bool:
+        print("[DEBUG] _open_camera called", flush=True)
         if self.camera_capture is not None:
             return True
         try:
@@ -557,15 +558,18 @@ class SimulatorBackgroundWidget(QWidget):
 
             self.camera_capture = cv2.VideoCapture(0)
             if not self.camera_capture.isOpened():
-                log.error("Could not open camera")
+                print("[DEBUG] camera VideoCapture(0) not opened", flush=True)
+                log.error("Could not open camera", extra={"console": True})
                 self.camera_capture = None
                 return False
             for _ in range(INITIAL_CAMERA_FRAMES_TO_DISCARD):
                 self.camera_capture.read()
-            log.info("Camera opened successfully")
+            print("[DEBUG] camera opened successfully", flush=True)
+            log.info("Camera opened successfully", extra={"console": True})
             return True
         except Exception as e:
-            log.error(f"Error opening camera: {e}", exc_info=True)
+            print(f"[DEBUG] camera exception: {e}", flush=True)
+            log.error(f"Error opening camera: {e}", exc_info=True, extra={"console": True})
             self.camera_capture = None
             return False
 
@@ -574,9 +578,9 @@ class SimulatorBackgroundWidget(QWidget):
             try:
                 self.camera_capture.release()
                 self.camera_capture = None
-                log.info("Camera closed")
+                log.info("Camera closed", extra={"console": True})
             except Exception as e:
-                log.error(f"Error closing camera: {e}", exc_info=True)
+                log.error(f"Error closing camera: {e}", exc_info=True, extra={"console": True})
 
     def _open_video(self) -> bool:
         if self.video_capture is not None:
@@ -646,7 +650,7 @@ class SimulatorBackgroundWidget(QWidget):
                 and self.current_preset != SimulatorBackgroundPreset.CAMERA
             ):
                 if not self._open_camera():
-                    log.error("Failed to open camera, keeping current preset")
+                    log.error("Failed to open camera, keeping current preset", extra={"console": True})
                     return
 
             if preset_enum in video_presets and (
@@ -1154,12 +1158,15 @@ class SimulatorRunApp(QMainWindow):
         self._toggle_raw_view()
 
     def change_background(self, preset: str) -> None:
+        print(f"[DEBUG] change_background called with preset={preset!r}", flush=True)
         if hasattr(self, "_raw_mode") and self._raw_mode:
             self._set_raw_view(False)
         self._active_mode = preset
         self._update_mode_button_styles()
         if self.background_widget is not None:
             self.background_widget.change_background(preset)
+        else:
+            print("[DEBUG] background_widget is None!", flush=True)
 
     def closeEvent(self, event) -> None:
         if hasattr(self, "_composite_timer") and self._composite_timer.isActive():
