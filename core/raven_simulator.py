@@ -361,7 +361,13 @@ class _BackgroundWorker(QObject):
                     ):
                         ret, background = cam.read()
                         if not ret or background is None:
+                            print(f"[DEBUG] cam.read() failed: ret={ret}", flush=True)
                             continue
+                        if not hasattr(self, '_cam_frame_count'):
+                            self._cam_frame_count = 0
+                        self._cam_frame_count += 1
+                        if self._cam_frame_count <= 3:
+                            print(f"[DEBUG] cam.read() ok: frame {self._cam_frame_count}, shape={background.shape}", flush=True)
                         cam_height, cam_width = background.shape[:2]
                         target_aspect = w / h
                         cam_aspect = cam_width / cam_height
