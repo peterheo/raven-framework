@@ -348,11 +348,13 @@ class _BackgroundWorker(QObject):
             try:
                 w, h = self._widget.resolution[0], self._widget.resolution[1]
                 background = None
+                use_snap = False
                 with self._widget._capture_lock:
                     preset = self._widget.current_preset
                     cam = self._widget.camera_capture
                     vid = self._widget.video_capture
                     path = self._widget.background_path
+                    use_snap = self._widget._use_imagesnap
 
                     if (
                         preset == SimulatorBackgroundPreset.CAMERA
@@ -361,13 +363,7 @@ class _BackgroundWorker(QObject):
                     ):
                         ret, background = cam.read()
                         if not ret or background is None:
-                            print(f"[DEBUG] cam.read() failed: ret={ret}", flush=True)
                             continue
-                        if not hasattr(self, '_cam_frame_count'):
-                            self._cam_frame_count = 0
-                        self._cam_frame_count += 1
-                        if self._cam_frame_count <= 3:
-                            print(f"[DEBUG] cam.read() ok: frame {self._cam_frame_count}, shape={background.shape}", flush=True)
                         cam_height, cam_width = background.shape[:2]
                         target_aspect = w / h
                         cam_aspect = cam_width / cam_height
@@ -437,6 +433,28 @@ class _BackgroundWorker(QObject):
                                 background, (w, h), interpolation=cv2.INTER_LINEAR
                             )
 
+                if preset == SimulatorBackgroundPreset.CAMERA and use_snap and background is None:
+                    import subprocess
+                    import tempfile
+
+                    tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                    tmp_path = tmp.name
+                    tmp.close()
+                    try:
+                        subprocess.run(["imagesnap", tmp_path], capture_output=True, timeout=5)
+                        background = cv2.imread(tmp_path)
+                        if background is not None:
+                            background = cv2.resize(
+                                background, (w, h), interpolation=cv2.INTER_LINEAR
+                            )
+                    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                        pass
+                    finally:
+                        try:
+                            os.remove(tmp_path)
+                        except OSError:
+                            pass
+
                 if background is not None:
                     composite_rgb = cv2.cvtColor(background, cv2.COLOR_BGR2RGB)
                     height, width = composite_rgb.shape[:2]
@@ -467,6 +485,7 @@ class SimulatorBackgroundWidget(QWidget):
         self.resolution = resolution
         self.current_preset = SimulatorBackgroundPreset.NIGHT
         self.camera_capture = None
+        self._use_imagesnap = False
         self.video_capture = None
         self.background_path = None
 
@@ -556,30 +575,73 @@ class SimulatorBackgroundWidget(QWidget):
             )
 
     def _open_camera(self) -> bool:
-        print("[DEBUG] _open_camera called", flush=True)
-        if self.camera_capture is not None:
+        if self.camera_capture is not None or self._use_imagesnap:
             return True
         try:
             import cv2
 
             self.camera_capture = cv2.VideoCapture(0)
-            if not self.camera_capture.isOpened():
-                print("[DEBUG] camera VideoCapture(0) not opened", flush=True)
-                log.error("Could not open camera", extra={"console": True})
+            if self.camera_capture.isOpened():
+                cam_ok = False
+                for _ in range(INITIAL_CAMERA_FRAMES_TO_DISCARD):
+                    ret, _ = self.camera_capture.read()
+                    cam_ok = cam_ok or ret
+                if not cam_ok:
+                    ret, _ = self.camera_capture.read()
+                    cam_ok = ret
+                if cam_ok:
+                    log.info("Camera opened successfully", extra={"console": True})
+                    return True
+            # cv2 failed to open or failed to read a real frame (e.g. macOS TCC
+            # blocks AVFoundation capture even though VideoCapture reports open).
+            if self.camera_capture is not None:
+                self.camera_capture.release()
                 self.camera_capture = None
-                return False
-            for _ in range(INITIAL_CAMERA_FRAMES_TO_DISCARD):
-                self.camera_capture.read()
-            print("[DEBUG] camera opened successfully", flush=True)
-            log.info("Camera opened successfully", extra={"console": True})
-            return True
+            return self._open_camera_imagesnap()
         except Exception as e:
-            print(f"[DEBUG] camera exception: {e}", flush=True)
             log.error(f"Error opening camera: {e}", exc_info=True, extra={"console": True})
             self.camera_capture = None
+            return self._open_camera_imagesnap()
+
+    def _open_camera_imagesnap(self) -> bool:
+        """Fallback for macOS: capture via the `imagesnap` CLI instead of cv2."""
+        import shutil
+        import subprocess
+        import tempfile
+
+        if not shutil.which("imagesnap"):
+            log.error("Could not open camera (cv2 failed, imagesnap not found)", extra={"console": True})
             return False
 
+        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        try:
+            subprocess.run(
+                ["imagesnap", "-w", "0.5", tmp_path],
+                capture_output=True,
+                timeout=5,
+            )
+            if os.path.getsize(tmp_path) > 0:
+                self._use_imagesnap = True
+                self.camera_capture = None
+                log.info("Camera opened via imagesnap fallback", extra={"console": True})
+                return True
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log.error(f"Error opening camera via imagesnap: {e}", extra={"console": True})
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        log.error("Could not open camera (cv2 and imagesnap both failed)", extra={"console": True})
+        return False
+
     def _close_camera(self) -> None:
+        if self._use_imagesnap:
+            self._use_imagesnap = False
+            log.info("Camera closed (imagesnap mode)", extra={"console": True})
+            return
         if self.camera_capture is not None:
             try:
                 self.camera_capture.release()
@@ -1164,15 +1226,12 @@ class SimulatorRunApp(QMainWindow):
         self._toggle_raw_view()
 
     def change_background(self, preset: str) -> None:
-        print(f"[DEBUG] change_background called with preset={preset!r}", flush=True)
         if hasattr(self, "_raw_mode") and self._raw_mode:
             self._set_raw_view(False)
         self._active_mode = preset
         self._update_mode_button_styles()
         if self.background_widget is not None:
             self.background_widget.change_background(preset)
-        else:
-            print("[DEBUG] background_widget is None!", flush=True)
 
     def closeEvent(self, event) -> None:
         if hasattr(self, "_composite_timer") and self._composite_timer.isActive():
