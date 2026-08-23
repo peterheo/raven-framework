@@ -354,82 +354,82 @@ class _BackgroundWorker(QObject):
                     vid = self._widget.video_capture
                     path = self._widget.background_path
 
-                if (
-                    preset == SimulatorBackgroundPreset.CAMERA
-                    and cam is not None
-                    and cam.isOpened()
-                ):
-                    ret, background = cam.read()
-                    if not ret or background is None:
-                        continue
-                    cam_height, cam_width = background.shape[:2]
-                    target_aspect = w / h
-                    cam_aspect = cam_width / cam_height
-                    if cam_aspect > target_aspect:
-                        new_height = h
-                        new_width = int(cam_width * (h / cam_height))
-                        background = cv2.resize(
-                            background,
-                            (new_width, new_height),
-                            interpolation=cv2.INTER_LINEAR,
-                        )
-                        crop_x = (new_width - w) // 2
-                        background = background[:, crop_x : crop_x + w]
-                    else:
-                        new_width = w
-                        new_height = int(cam_height * (w / cam_width))
-                        background = cv2.resize(
-                            background,
-                            (new_width, new_height),
-                            interpolation=cv2.INTER_LINEAR,
-                        )
-                        crop_y = (new_height - h) // 2
-                        background = background[crop_y : crop_y + h, :]
-                elif (
-                    preset
-                    in [
-                        SimulatorBackgroundPreset.DAY,
-                        SimulatorBackgroundPreset.NIGHT,
-                        SimulatorBackgroundPreset.OUTDOORS,
-                    ]
-                    and vid is not None
-                    and vid.isOpened()
-                ):
-                    ret, background = vid.read()
-                    if not ret or background is None:
-                        vid.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        ret, background = vid.read()
+                    if (
+                        preset == SimulatorBackgroundPreset.CAMERA
+                        and cam is not None
+                        and cam.isOpened()
+                    ):
+                        ret, background = cam.read()
                         if not ret or background is None:
                             continue
-                    video_height, video_width = background.shape[:2]
-                    target_aspect = w / h
-                    video_aspect = video_width / video_height
-                    if video_aspect > target_aspect:
-                        new_height = h
-                        new_width = int(video_width * (h / video_height))
-                        background = cv2.resize(
-                            background,
-                            (new_width, new_height),
-                            interpolation=cv2.INTER_LINEAR,
-                        )
-                        crop_x = (new_width - w) // 2
-                        background = background[:, crop_x : crop_x + w]
-                    else:
-                        new_width = w
-                        new_height = int(video_height * (w / video_width))
-                        background = cv2.resize(
-                            background,
-                            (new_width, new_height),
-                            interpolation=cv2.INTER_LINEAR,
-                        )
-                        crop_y = (new_height - h) // 2
-                        background = background[crop_y : crop_y + h, :]
-                elif path is not None and os.path.exists(path):
-                    background = cv2.imread(path)
-                    if background is not None:
-                        background = cv2.resize(
-                            background, (w, h), interpolation=cv2.INTER_LINEAR
-                        )
+                        cam_height, cam_width = background.shape[:2]
+                        target_aspect = w / h
+                        cam_aspect = cam_width / cam_height
+                        if cam_aspect > target_aspect:
+                            new_height = h
+                            new_width = int(cam_width * (h / cam_height))
+                            background = cv2.resize(
+                                background,
+                                (new_width, new_height),
+                                interpolation=cv2.INTER_LINEAR,
+                            )
+                            crop_x = (new_width - w) // 2
+                            background = background[:, crop_x : crop_x + w]
+                        else:
+                            new_width = w
+                            new_height = int(cam_height * (w / cam_width))
+                            background = cv2.resize(
+                                background,
+                                (new_width, new_height),
+                                interpolation=cv2.INTER_LINEAR,
+                            )
+                            crop_y = (new_height - h) // 2
+                            background = background[crop_y : crop_y + h, :]
+                    elif (
+                        preset
+                        in [
+                            SimulatorBackgroundPreset.DAY,
+                            SimulatorBackgroundPreset.NIGHT,
+                            SimulatorBackgroundPreset.OUTDOORS,
+                        ]
+                        and vid is not None
+                        and vid.isOpened()
+                    ):
+                        ret, background = vid.read()
+                        if not ret or background is None:
+                            vid.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            ret, background = vid.read()
+                            if not ret or background is None:
+                                continue
+                        video_height, video_width = background.shape[:2]
+                        target_aspect = w / h
+                        video_aspect = video_width / video_height
+                        if video_aspect > target_aspect:
+                            new_height = h
+                            new_width = int(video_width * (h / video_height))
+                            background = cv2.resize(
+                                background,
+                                (new_width, new_height),
+                                interpolation=cv2.INTER_LINEAR,
+                            )
+                            crop_x = (new_width - w) // 2
+                            background = background[:, crop_x : crop_x + w]
+                        else:
+                            new_width = w
+                            new_height = int(video_height * (w / video_width))
+                            background = cv2.resize(
+                                background,
+                                (new_width, new_height),
+                                interpolation=cv2.INTER_LINEAR,
+                            )
+                            crop_y = (new_height - h) // 2
+                            background = background[crop_y : crop_y + h, :]
+                    elif path is not None and os.path.exists(path):
+                        background = cv2.imread(path)
+                        if background is not None:
+                            background = cv2.resize(
+                                background, (w, h), interpolation=cv2.INTER_LINEAR
+                            )
 
                 if background is not None:
                     composite_rgb = cv2.cvtColor(background, cv2.COLOR_BGR2RGB)
